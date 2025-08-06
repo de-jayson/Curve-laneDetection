@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TabJ Detection System</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="detect.css">
+  <link href="https://fonts.googleapis.com/css?family=Muli%7CRoboto:400,300,500,700,900" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/detect.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='detect.css') }}"/>
+
+</head>
+  <body>
+
+    <nav>
+        <div class="menu">
+          <div class="logo">
+            <a href="{{url_for('index')}}">TabJ Detection</a>
+          </div>
+          <ul>
+            <li><a href="{{ url_for('index')}}">Home</a></li>
+            <li><a href="{{ url_for('detect')}}">Detect</a></li>
+            <li><a href="{{ url_for('about')}}">About</a></li>
+          </ul>
+        </div>
+      </nav>
+
+    <header>
+      <img src="LOGO1.jpg" alt="" class="">
+    </header>
+
+    <main class="flex">
+      <div class="card">
+        <h2>Detect Objects</h2>
+        <p> This option helps you to detect objects in real time</p>
+        <p>Click on the button below to continue.</p>
+        <button class="first"><a href="{{ url_for('object_detection')}}">Object Detection</a></button>
+      </div>
+      <div class="card">
+        <h2>Detect Lanes and curves</h2>
+        <p>This option enables users to navigate their ways on roads by detecting the curvature and lanes</p>
+        <p>Click on the button to continue</p>
+        <button class="first"><a href="{{ url_for('lane_detection')}}">Lane Detection</a></button>
+      </div>
+  </body>
+  </html>
