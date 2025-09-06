@@ -40,11 +40,8 @@ class FindLaneLines:
 
     def forward(self, img):
         try:
-            # Use simple lane detection for better results
-            lane_img = self.simple_lane_detector.forward(img)
-            
-            # Blend with original image
-            out_img = cv2.addWeighted(img, 0.7, lane_img, 0.3, 0)
+            lane_img = self.lanelines.forward(img)  # Use LaneLines from LaneLines.py
+            out_img = lane_img
             
             # Add status text
             cv2.putText(out_img, "Lane Detection Active", (10, 30), 
