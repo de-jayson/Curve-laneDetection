@@ -32,9 +32,9 @@ class ObjectDetector:
         self.fps_start_time = time.time()
         self.current_fps = 0
         
-        # Detection parameters - more sensitive
-        self.confidence_threshold = 0.25  # Lower threshold for better detection
-        self.nms_threshold = 0.4
+        # Detection parameters - more balanced
+        self.confidence_threshold = 0.4  # Higher threshold for better accuracy
+        self.nms_threshold = 0.5
         
     def _load_class_names(self):
         """Load class names from file."""
@@ -77,28 +77,28 @@ class ObjectDetector:
         if self.model is None:
             return frame, []
         
-        # Run detection with maximum speed settings
+        # Run detection with balanced settings
         results = self.model.predict(
             source=frame,
             conf=self.confidence_threshold,
             save=False,
             verbose=False,
-            imgsz=256,  # Very small image size for maximum speed
-            device='cpu',  # Force CPU for stability
-            half=False,  # Disable half precision for speed
-            augment=False,  # Disable augmentation for speed
-            agnostic_nms=True,  # Faster NMS
-            max_det=3,  # Very few detections for speed
-            iou=0.8,  # Higher IoU threshold for faster NMS
-            classes=[0, 1, 2, 3, 5, 7],  # Only detect common objects (person, car, truck, bus, etc.)
-            retina_masks=False,  # Disable retina masks for speed
-            show=False,  # Disable display
-            save_txt=False,  # Disable text output
-            save_conf=False,  # Disable confidence saving
-            save_crop=False,  # Disable crop saving
-            show_labels=True,  # Keep labels for display
-            show_conf=True,  # Keep confidence for display
-            line_width=1  # Thinnest lines for speed
+            imgsz=320,  # Slightly larger image size for better accuracy
+            device='cpu',
+            half=False,
+            augment=False,
+            agnostic_nms=False, # Better NMS
+            max_det=10,  # More detections
+            iou=0.5,  # Standard IoU threshold
+            classes=[0, 1, 2, 3, 5, 7, 9],  # Added traffic light
+            retina_masks=False,
+            show=False,
+            save_txt=False,
+            save_conf=False,
+            save_crop=False,
+            show_labels=True,
+            show_conf=True,
+            line_width=2 # Thicker lines
         )
         
         # Process results

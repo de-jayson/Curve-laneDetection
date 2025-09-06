@@ -78,17 +78,11 @@ def generate_frames():
             logger.error("Cannot open video source")
             return
         
-        # Set camera properties for instant access and maximum speed
+        # Set camera properties for better responsiveness
         cap.set(cv.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv.CAP_PROP_FPS, 60)  # Higher FPS
-        cap.set(cv.CAP_PROP_BUFFERSIZE, 1)  # Single buffer for instant response
-        cap.set(cv.CAP_PROP_FOURCC, cv.VideoWriter_fourcc('M', 'J', 'P', 'G'))  # MJPEG for speed
-        cap.set(cv.CAP_PROP_AUTOFOCUS, 0)  # Disable autofocus
-        cap.set(cv.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Manual exposure for speed
-        cap.set(cv.CAP_PROP_BRIGHTNESS, 128)  # Fixed brightness
-        cap.set(cv.CAP_PROP_CONTRAST, 128)  # Fixed contrast
-        cap.set(cv.CAP_PROP_SATURATION, 128)  # Fixed saturation
+        cap.set(cv.CAP_PROP_FPS, 30)  # More realistic FPS
+        cap.set(cv.CAP_PROP_BUFFERSIZE, 1)  # Single buffer for low latency
         
         # Variable to track the last time audio was played
         last_play_time = time.time()
@@ -104,8 +98,6 @@ def generate_frames():
             "Caution! you're not staying centered in the lane"
         ]
         
-        frame_count = 0
-        
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -113,21 +105,20 @@ def generate_frames():
                 break
             
             try:
-                # Fast frame processing without heavy optimization
+                # Fast frame processing
                 processed_frame = frame.copy()
                 
                 if detection_mode == 'lane' and findLaneLines is not None:
-                    # Lane detection - direct processing for speed
+                    # Lane detection
                     try:
                         processed_frame = findLaneLines.forward(frame)
                     except Exception as e:
                         logger.warning(f"Lane detection error: {e}")
-                        # Fallback: just show original frame with text
                         cv.putText(processed_frame, "Lane Detection Error", (10, 50), 
                                   cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                     
-                    # Audio feedback (reduced frequency)
-                    if audio_available and time.time() - last_play_time >= 15:  # 15 seconds delay
+                    # Audio feedback
+                    if audio_available and time.time() - last_play_time >= 10:  # 10 seconds delay
                         try:
                             lane_feedback = random.choice(feedback_messages)
                             tts = gTTS(text=lane_feedback, lang='en')
@@ -142,20 +133,9 @@ def generate_frames():
                             logger.warning(f"Error playing audio: {e}")
                 
                 elif detection_mode == 'object' and object_detector is not None:
-                    # Object detection - maximum speed processing
+                    # Object detection - no frame skipping
                     try:
-                        # Process every 2nd frame for speed (skip frames)
-                        if frame_count % 2 == 0:
-                            # Resize frame for ultra-fast processing
-                            small_frame = cv.resize(frame, (256, 192))
-                            processed_small, detections = object_detector.detect_objects(small_frame)
-                            
-                            # Resize back to original size
-                            processed_frame = cv.resize(processed_small, (frame.shape[1], frame.shape[0]))
-                        else:
-                            # Use previous frame result for skipped frames
-                            processed_frame = frame.copy()
-                            detections = []
+                        processed_frame, detections = object_detector.detect_objects(frame)
                         
                         # Draw detection count
                         count_text = f"Objects: {len(detections)}"
@@ -163,7 +143,6 @@ def generate_frames():
                                   cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     except Exception as e:
                         logger.warning(f"Object detection error: {e}")
-                        # Fallback: just show original frame with text
                         cv.putText(processed_frame, "Object Detection Error", (10, 50), 
                                   cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                 
@@ -189,8 +168,8 @@ def generate_frames():
                 cv.putText(processed_frame, memory_text, (10, 150), 
                           cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 
-                # Ultra-fast frame encoding
-                ret, buffer = cv.imencode('.jpg', processed_frame, [cv.IMWRITE_JPEG_QUALITY, 60])
+                # High-quality frame encoding
+                ret, buffer = cv.imencode('.jpg', processed_frame, [cv.IMWRITE_JPEG_QUALITY, 80])
                 if not ret:
                     logger.warning("Failed to encode frame")
                     continue
@@ -199,8 +178,6 @@ def generate_frames():
                 
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                
-                frame_count += 1
                 
             except Exception as e:
                 logger.error(f"Error processing frame: {e}")
@@ -371,7 +348,7 @@ def process_image():
             processed_img = img
         
         # Encode processed image
-        ret, buffer = cv.imencode('.jpg', processed_img, [cv.IMWRITE_JPEG_QUALITY, 85])
+        ret, buffer = cv.imencode('.jpg', processed_img, [cv.IMWRITE_JPEG_QUALITY, 90])
         if not ret:
             return jsonify({'error': 'Could not encode processed image'}), 500
         
@@ -437,110 +414,3 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Failed to start application: {e}")
         raise
-
-
-# Trial on  both lane and performance
-# import random  # For randomly selecting feedback
-
-# def generate_frames():
-#     cap = cv.VideoCapture(video_source)
-#     if not cap.isOpened():
-#         print("Cannot open video source")
-#         return
-
-#     # Variable to track the last time audio was played
-#     last_play_time = time.time()  # Initialize with the current time
-
-#     # List of dynamic feedback messages
-#     feedback_messages = [
-#         "Good lane keeping, keep it up!",
-#         "You're doing great, stay focused!",
-#         "Excellent lane control, well done!",
-#         "Keep driving safe and stay in your lane!",
-#         "Your lane keeping is on point, keep going!",
-#         "Nice driving! Stay alert and keep up the good work!"
-#     ]
-
-#     while True:
-#         ret, frame = cap.read()
-#         if not ret:
-#             break
-
-#         processed_frame = frame
-
-#         if detection_mode == 'lane':
-#             # Process the frame for lane detection
-#             processed_frame = findLaneLines.forward(frame)
-
-#             # Determine if the lane is straight or curved
-#             if findLaneLines.is_straight_lane:
-#                 lane_feedback = "Straight lane detected, keep driving steady!"
-#             else:
-#                 lane_feedback = "Curve ahead, adjust your steering carefully!"
-
-#             # Randomly select a feedback message for performance
-#             performance_feedback = random.choice(feedback_messages)
-
-#             # Combine the lane detection feedback and performance feedback
-#             full_feedback = f"{lane_feedback} {performance_feedback}"
-
-#             # Check if 5 seconds have passed since the last audio play
-#             if time.time() - last_play_time >= 5:  # 5 seconds delay
-#                 try:
-#                     # Generate speech audio in-memory
-#                     tts = gTTS(text=full_feedback, lang='en')
-#                     audio_fp = io.BytesIO()
-#                     tts.write_to_fp(audio_fp)
-#                     audio_fp.seek(0)
-
-#                     # Play the audio directly from memory
-#                     pygame.mixer.music.load(audio_fp, 'mp3')
-#                     pygame.mixer.music.play()
-
-#                     # Update the last play time
-#                     last_play_time = time.time()
-
-#                 except Exception as e:
-#                     print(f"Error playing audio: {e}")
-
-#         elif detection_mode == 'object':
-#             detect_param = model.predict(source=[frame], conf=0.45, save=False)
-#             DP = detect_param[0].numpy()
-
-#             if len(DP) != 0:
-#                 for i in range(len(detect_param[0])):
-#                     boxes = detect_param[0].boxes
-#                     box = boxes[i]
-#                     clsID = box.cls.numpy()[0]
-#                     conf = box.conf.numpy()[0]
-#                     bb = box.xyxy.numpy()[0]
-
-#                     cv.rectangle(
-#                         frame,
-#                         (int(bb[0]), int(bb[1])),
-#                         (int(bb[2]), int(bb[3])),
-#                         detection_colors[int(clsID)],
-#                         3,
-#                     )
-
-#                     font = cv.FONT_HERSHEY_COMPLEX
-#                     cv.putText(
-#                         frame,
-#                         class_list[int(clsID)],
-#                         (int(bb[0]), int(bb[1]) - 10),
-#                         font,
-#                         1,
-#                         (255, 255, 255),
-#                         2,
-#                     )
-
-#                 processed_frame = frame
-
-#         ret, buffer = cv.imencode('.jpg', processed_frame)
-#         frame = buffer.tobytes()
-
-#         yield (b'--frame\r\n'
-#                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-
-#     cap.release()
-
