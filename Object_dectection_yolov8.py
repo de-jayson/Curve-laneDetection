@@ -1,102 +1,205 @@
 import random
-
 import cv2 as cv
 import numpy as np
 from ultralytics import YOLO
+import time
+import os
 
-
-
-# opening our dataset file in read mode
-my_file = open("C:\\Users\\Ben Alpha\\Python Works\\My Project\\Model\\utils\\coco.txt", "r")
-
-# reading the data/file
-data = my_file.read()
-
-# replacing and splitting the text | when newline ("\n") is seen
-class_list = data.split("\n")
-my_file.close()
-
-# print(class_list)
-
-# Generating random colors for each identified item
-detection_colors = []
-for i in range(len(class_list)):
-    r = random.randint(0, 255)
-    g = random.randint(0, 255)
-    b = random.randint(0, 255)
-    detection_colors.append((b,g,r))
-
-# Load a pretrained YOLOv8 model
-model = YOLO("weights/yolov8n.pt", "v8")
-
-# Values to resize video frames
-frame_width = 640
-frame_height = 480
-
-# Capturing our loaded images in a video format
-# cap = cv.VideoCapture("C:\\Users\\Ben Alpha\\Python Works\\My Project\\inference\\videos\\afriq0.MP4")
-cap = cv.VideoCapture(0)
-
-if not cap.isOpened():
-    print("Cannot open camera")
-    exit()
-
-while True:
-    #  capture frame by frame
-    ret, frame = cap.read()
-    # if frame is read correctly ret is True
-
-    if not ret:
-        print("Can't receive frame(stream ends?) Exiting .....")
-        break
-
-    # Prediction on the image
+class ObjectDetector:
+    """Enhanced object detection class with improved performance and features."""
     
-    detect_param = model.predict(source=[frame],conf=0.45, save= False)
-
-    # convert tensor array to numpy
-    DP = detect_param[0].numpy()
-    print(DP)
-
-    if len(DP) != 0:
-        for i in range(len(detect_param[0])):
-            print(i)
-
-            boxes = detect_param[0].boxes
-            box = boxes[i] #returns one box
-            clsID = box.cls.numpy()[0]
-            conf = box.conf.numpy()[0]
-            bb = box.xyxy.numpy()[0]
-
-            cv.rectangle(
-                frame,
-                (int(bb[0]),int(bb[1])),
-                (int(bb[2]), int(bb[3])),
-                detection_colors[int(clsID)],
-                3,
-            )
-
-            # Display class name and confidence
-            font = cv.FONT_HERSHEY_COMPLEX
-            cv.putText(
-                frame,
-                class_list[int(clsID)], 
-                # + " " + str(round(conf,3)) + "%",
-                (int(bb[0]), int(bb[1]) - 10),
-                font,
-                1,
-                (255,255,255),
-                2,
-            )
-           
+    def __init__(self, model_path="weights/yolov8n.pt", class_file="ftj/utils/coco.txt"):
+        """Initialize the object detector.
+        
+        Args:
+            model_path (str): Path to YOLO model weights
+            class_file (str): Path to class names file
+        """
+        self.model_path = model_path
+        self.class_file = class_file
+        
+        # Load class names
+        self.class_list = self._load_class_names()
+        
+        # Generate consistent colors for each class
+        self.detection_colors = self._generate_colors()
+        
+        # Load YOLO model
+        self.model = self._load_model()
+        
+        # Performance tracking
+        self.fps_counter = 0
+        self.fps_start_time = time.time()
+        self.current_fps = 0
+        
+        # Detection parameters - more sensitive
+        self.confidence_threshold = 0.25  # Lower threshold for better detection
+        self.nms_threshold = 0.4
+        
+    def _load_class_names(self):
+        """Load class names from file."""
+        try:
+            with open(self.class_file, "r") as f:
+                return f.read().strip().split("\n")
+        except FileNotFoundError:
+            print(f"Warning: Class file {self.class_file} not found. Using default classes.")
+            return [f"class_{i}" for i in range(80)]
     
-    # Display the resulting frame
-    cv.imshow("ObjectDectector", frame)
+    def _generate_colors(self):
+        """Generate consistent colors for each class."""
+        colors = []
+        for i in range(len(self.class_list)):
+            # Use a deterministic approach for consistent colors
+            random.seed(i)
+            r = random.randint(0, 255)
+            g = random.randint(0, 255)
+            b = random.randint(0, 255)
+            colors.append((b, g, r))
+        return colors
+    
+    def _load_model(self):
+        """Load YOLO model with error handling."""
+        try:
+            return YOLO(self.model_path)
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            return None
+    
+    def detect_objects(self, frame):
+        """Detect objects in a frame.
+        
+        Args:
+            frame (np.array): Input frame
+            
+        Returns:
+            tuple: (processed_frame, detections_info)
+        """
+        if self.model is None:
+            return frame, []
+        
+        # Run detection with maximum speed settings
+        results = self.model.predict(
+            source=frame,
+            conf=self.confidence_threshold,
+            save=False,
+            verbose=False,
+            imgsz=256,  # Very small image size for maximum speed
+            device='cpu',  # Force CPU for stability
+            half=False,  # Disable half precision for speed
+            augment=False,  # Disable augmentation for speed
+            agnostic_nms=True,  # Faster NMS
+            max_det=3,  # Very few detections for speed
+            iou=0.8,  # Higher IoU threshold for faster NMS
+            classes=[0, 1, 2, 3, 5, 7],  # Only detect common objects (person, car, truck, bus, etc.)
+            retina_masks=False,  # Disable retina masks for speed
+            show=False,  # Disable display
+            save_txt=False,  # Disable text output
+            save_conf=False,  # Disable confidence saving
+            save_crop=False,  # Disable crop saving
+            show_labels=True,  # Keep labels for display
+            show_conf=True,  # Keep confidence for display
+            line_width=1  # Thinnest lines for speed
+        )
+        
+        # Process results
+        processed_frame = frame.copy()
+        detections_info = []
+        
+        if len(results) > 0 and results[0].boxes is not None:
+            boxes = results[0].boxes
+            
+            for i in range(len(boxes)):
+                box = boxes[i]
+                cls_id = int(box.cls[0])
+                confidence = float(box.conf[0])
+                bbox = box.xyxy[0].cpu().numpy()
+                
+                # Draw bounding box
+                x1, y1, x2, y2 = map(int, bbox)
+                color = self.detection_colors[cls_id % len(self.detection_colors)]
+                
+                cv.rectangle(processed_frame, (x1, y1), (x2, y2), color, 2)
+                
+                # Draw label with confidence
+                label = f"{self.class_list[cls_id]}: {confidence:.2f}"
+                label_size = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                
+                # Draw label background
+                cv.rectangle(processed_frame, (x1, y1 - label_size[1] - 10), 
+                           (x1 + label_size[0], y1), color, -1)
+                
+                # Draw label text
+                cv.putText(processed_frame, label, (x1, y1 - 5),
+                          cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                
+                detections_info.append({
+                    'class': self.class_list[cls_id],
+                    'confidence': confidence,
+                    'bbox': bbox
+                })
+        
+        return processed_frame, detections_info
+    
+    def update_fps(self):
+        """Update FPS counter."""
+        self.fps_counter += 1
+        if self.fps_counter % 30 == 0:  # Update every 30 frames
+            current_time = time.time()
+            self.current_fps = 30 / (current_time - self.fps_start_time)
+            self.fps_start_time = current_time
+    
+    def draw_fps(self, frame):
+        """Draw FPS counter on frame."""
+        fps_text = f"FPS: {self.current_fps:.1f}"
+        cv.putText(frame, fps_text, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        return frame
 
-    # Terminate run when "Q" is pressed
-    if cv.waitKey(1) == ord("q"):
-        break
+def main():
+    """Main function to run object detection."""
+    # Initialize detector
+    detector = ObjectDetector()
+    
+    # Initialize camera
+    cap = cv.VideoCapture(0)
+    if not cap.isOpened():
+        print("Cannot open camera")
+        return
+    
+    # Set camera properties for better performance
+    cap.set(cv.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv.CAP_PROP_FPS, 30)
+    
+    print("Object Detection started. Press 'q' to quit.")
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Can't receive frame. Exiting...")
+            break
+        
+        # Detect objects
+        processed_frame, detections = detector.detect_objects(frame)
+        
+        # Update FPS and draw it
+        detector.update_fps()
+        processed_frame = detector.draw_fps(processed_frame)
+        
+        # Draw detection count
+        count_text = f"Objects: {len(detections)}"
+        cv.putText(processed_frame, count_text, (10, 70), 
+                  cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        # Display frame
+        cv.imshow("Enhanced Object Detector", processed_frame)
+        
+        # Check for quit
+        if cv.waitKey(1) & 0xFF == ord('q'):
+            break
+    
+    # Cleanup
+    cap.release()
+    cv.destroyAllWindows()
 
-#  When everything done, release capture
-cap.release()
-cv.destroyAllWindows()
+if __name__ == "__main__":
+    main()

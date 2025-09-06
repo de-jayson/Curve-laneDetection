@@ -22,6 +22,7 @@ from CameraCalibration import CameraCalibration
 from Thresholding import *
 from PerspectiveTransformation import *
 from LaneLines import *
+from SimpleLaneDetection import SimpleLaneDetection
 
 class FindLaneLines:
     """ This class is for parameter tunning.
@@ -35,23 +36,28 @@ class FindLaneLines:
         self.thresholding = Thresholding()
         self.transform = PerspectiveTransformation()
         self.lanelines = LaneLines()
+        self.simple_lane_detector = SimpleLaneDetection()  # Add simple lane detector
 
     def forward(self, img):
-        out_img = np.copy(img)
-        img = self.calibration.undistort(img)
-        img = self.transform.forward(img)
-        img = self.thresholding.forward(img)
-        img = self.lanelines.forward(img)
-        img = self.transform.backward(img)
-      # Ensure the images have the same dimensions and number of channels
-        if out_img.shape != img.shape:
-            img = cv2.resize(img, (out_img.shape[1], out_img.shape[0]))
-            if len(out_img.shape) == 3 and len(img.shape) == 2:
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-        out_img = cv2.addWeighted(out_img, 1, img, 0.6, 0)
-        out_img = self.lanelines.plot(out_img)
-        return out_img
+        try:
+            # Use simple lane detection for better results
+            lane_img = self.simple_lane_detector.forward(img)
+            
+            # Blend with original image
+            out_img = cv2.addWeighted(img, 0.7, lane_img, 0.3, 0)
+            
+            # Add status text
+            cv2.putText(out_img, "Lane Detection Active", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            return out_img
+            
+        except Exception as e:
+            print(f"Error in lane detection: {e}")
+            # Return original image with error message
+            cv2.putText(img, "Lane Detection Error", (10, 50), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            return img
 
     def process_image(self, input_path, output_path):
         img = mpimg.imread(input_path)

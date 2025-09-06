@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import matplotlib.image as mpimg
+from collections import deque
 
 def hist(img):
     bottom_half = img[img.shape[0]//2:,:]
@@ -31,20 +32,42 @@ class LaneLines:
         self.nonzeroy = None
         self.clear_visibility = True
         self.dir = []
-        self.left_curve_img = mpimg.imread('left_turn.png')
-        self.right_curve_img = mpimg.imread('right_turn.png')
-        self.keep_straight_img = mpimg.imread('straight.png')
-        self.left_curve_img = cv2.normalize(src=self.left_curve_img, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        self.right_curve_img = cv2.normalize(src=self.right_curve_img, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        self.keep_straight_img = cv2.normalize(src=self.keep_straight_img, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+        # Smoothing parameters
+        self.smoothing_factor = 10
+        self.left_fit_history = deque(maxlen=self.smoothing_factor)
+        self.right_fit_history = deque(maxlen=self.smoothing_factor)
+        
+        # Lane detection confidence
+        self.left_detected = False
+        self.right_detected = False
+        self.detection_failures = 0
+        self.max_failures = 5
+        
+        # Load direction indicator images
+        try:
+            self.left_curve_img = mpimg.imread('left_turn.png')
+            self.right_curve_img = mpimg.imread('right_turn.png')
+            self.keep_straight_img = mpimg.imread('straight.png')
+            
+            # Normalize images
+            self.left_curve_img = cv2.normalize(src=self.left_curve_img, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            self.right_curve_img = cv2.normalize(src=self.right_curve_img, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            self.keep_straight_img = cv2.normalize(src=self.keep_straight_img, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        except Exception as e:
+            print(f"Warning: Could not load direction images: {e}")
+            self.left_curve_img = None
+            self.right_curve_img = None
+            self.keep_straight_img = None
 
-        # HYPERPARAMETERS
-        # Number of sliding windows
-        self.nwindows = 9
-        # Width of the the windows +/- margin
-        self.margin = 100
-        # Mininum number of pixels found to recenter window
-        self.minpix = 50
+        # HYPERPARAMETERS - Optimized for better lane detection
+        self.nwindows = 9  # More windows for better detection
+        self.margin = 100   # Standard margin
+        self.minpix = 20    # Very low threshold for detection
+        
+        # Curve detection parameters
+        self.curve_threshold = 0.0001  # Very sensitive
+        self.straight_threshold = 0.00005  # Very sensitive
 
     def forward(self, img):
         """Take a image and detect lane lines.
@@ -154,23 +177,63 @@ class LaneLines:
         Returns:
             out_img (np.array): a RGB image that have lane line drawn on that.
         """
-
         leftx, lefty, rightx, righty, out_img = self.find_lane_pixels(img)
 
-        if len(lefty) > 1500:
-            self.left_fit = np.polyfit(lefty, leftx, 2)
+        # Fit polynomials with improved validation
+        left_fit = None
+        right_fit = None
+        
+        # Very lenient detection thresholds for better detection
+        if len(lefty) > 100:  # Very low threshold
+            try:
+                left_fit = np.polyfit(lefty, leftx, 2)
+                self.left_detected = True
+            except:
+                self.left_detected = False
+                left_fit = None
         else:
-            self.left_fit = [0,0,0]
+            self.left_detected = False
+            left_fit = None
 
-        if len(righty) > 1500:
-            self.right_fit = np.polyfit(righty, rightx, 2)
+        if len(righty) > 100:  # Very low threshold
+            try:
+                right_fit = np.polyfit(righty, rightx, 2)
+                self.right_detected = True
+            except:
+                self.right_detected = False
+                right_fit = None
         else:
-            self.right_fit = [0,0,0]
+            self.right_detected = False
+            right_fit = None
 
-        # Debug print statement
-        print("Left fit coefficients: ", self.left_fit)
+        # Apply smoothing if we have previous fits
+        if self.left_detected and len(self.left_fit_history) > 0:
+            # Smooth the left fit
+            self.left_fit_history.append(left_fit)
+            self.left_fit = np.mean(self.left_fit_history, axis=0)
+        elif self.left_detected:
+            self.left_fit = left_fit
+            self.left_fit_history.append(left_fit)
+        else:
+            # Use previous fit if available
+            if len(self.left_fit_history) > 0:
+                self.left_fit = self.left_fit_history[-1]
+            else:
+                self.left_fit = np.array([0, 0, 0])
 
-        print("Right fit coefficients: ", self.right_fit)
+        if self.right_detected and len(self.right_fit_history) > 0:
+            # Smooth the right fit
+            self.right_fit_history.append(right_fit)
+            self.right_fit = np.mean(self.right_fit_history, axis=0)
+        elif self.right_detected:
+            self.right_fit = right_fit
+            self.right_fit_history.append(right_fit)
+        else:
+            # Use previous fit if available
+            if len(self.right_fit_history) > 0:
+                self.right_fit = self.right_fit_history[-1]
+            else:
+                self.right_fit = np.array([0, 0, 0])
 
         # Generate x and y values for plotting
         maxy = img.shape[0] - 1
@@ -188,37 +251,42 @@ class LaneLines:
         left_fitx = self.left_fit[0]*ploty**2 + self.left_fit[1]*ploty + self.left_fit[2]
         right_fitx = self.right_fit[0]*ploty**2 + self.right_fit[1]*ploty + self.right_fit[2]
 
-        # Visualization
+        # Visualization with improved drawing
         for i, y in enumerate(ploty):
             l = int(left_fitx[i])
             r = int(right_fitx[i])
             y = int(y)
-            cv2.line(out_img, (l, y), (r, y), (0, 255, 0))
-
-        lR, rR, pos = self.measure_curvature()
+            if 0 <= l < img.shape[1] and 0 <= r < img.shape[1]:
+                cv2.line(out_img, (l, y), (r, y), (0, 255, 0), 2)
 
         return out_img
 
     def plot(self, out_img):
+        """Plot lane detection results with improved visualization."""
         np.set_printoptions(precision=6, suppress=True)
         lR, rR, pos = self.measure_curvature()
 
+        # Improved curve detection
         value = None
         if abs(self.left_fit[0]) > abs(self.right_fit[0]):
             value = self.left_fit[0]
         else:
             value = self.right_fit[0]
 
-        if abs(value) <= 0.00015:
+        # More robust curve detection
+        if abs(value) <= self.straight_threshold:
             self.dir.append('F')
-        elif value < 0:
+        elif value < -self.curve_threshold:
             self.dir.append('L')
-        else:
+        elif value > self.curve_threshold:
             self.dir.append('R')
+        else:
+            self.dir.append('F')
         
         if len(self.dir) > 10:
             self.dir.pop(0)
 
+        # Create info widget
         W = 400
         H = 500
         widget = np.copy(out_img[:H, :W])
@@ -232,29 +300,34 @@ class LaneLines:
         direction = max(set(self.dir), key = self.dir.count)
         msg = "Keep Straight Ahead"
         curvature_msg = "Curvature = {:.0f} m".format(min(lR, rR))
-        if direction == 'L':
+        
+        # Draw direction indicators
+        if self.left_curve_img is not None and direction == 'L':
             y, x = self.left_curve_img[:,:,3].nonzero()
             out_img[y, x-100+W//2] = self.left_curve_img[y, x, :3]
             msg = "Left Curve Ahead"
-        if direction == 'R':
+        elif self.right_curve_img is not None and direction == 'R':
             y, x = self.right_curve_img[:,:,3].nonzero()
             out_img[y, x-100+W//2] = self.right_curve_img[y, x, :3]
             msg = "Right Curve Ahead"
-        if direction == 'F':
+        elif self.keep_straight_img is not None and direction == 'F':
             y, x = self.keep_straight_img[:,:,3].nonzero()
             out_img[y, x-100+W//2] = self.keep_straight_img[y, x, :3]
 
+        # Add text overlays
         cv2.putText(out_img, msg, org=(10, 240), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, color=(255, 255, 255), thickness=2)
         if direction in 'LR':
             cv2.putText(out_img, curvature_msg, org=(10, 280), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, color=(255, 255, 255), thickness=2)
 
+        # Lane keeping status
+        status_color = (0, 255, 0) if abs(pos) < 0.5 else (0, 255, 255) if abs(pos) < 1.0 else (0, 0, 255)
         cv2.putText(
             out_img,
-            "Good Lane Keeping",
+            "Good Lane Keeping" if abs(pos) < 0.5 else "Caution: Drifting" if abs(pos) < 1.0 else "Warning: Lane Departure",
             org=(10, 400),
             fontFace=cv2.FONT_HERSHEY_SIMPLEX,
             fontScale=1.2,
-            color=(0, 255, 0),
+            color=status_color,
             thickness=2)
 
         cv2.putText(
@@ -269,6 +342,7 @@ class LaneLines:
         return out_img
 
     def measure_curvature(self):
+        """Measure lane curvature and vehicle position."""
         ym = 30/720
         xm = 3.7/700
 
@@ -276,13 +350,21 @@ class LaneLines:
         right_fit = self.right_fit.copy()
         y_eval = 700 * ym
 
-        # Compute R_curve (radius of curvature)
-        left_curveR =  ((1 + (2*left_fit[0] *y_eval + left_fit[1])**2)**1.5)  / np.absolute(2*left_fit[0])
-        right_curveR = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) / np.absolute(2*right_fit[0])
+        # Compute R_curve (radius of curvature) with safety checks
+        try:
+            left_curveR = ((1 + (2*left_fit[0] *y_eval + left_fit[1])**2)**1.5) / np.absolute(2*left_fit[0])
+            right_curveR = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) / np.absolute(2*right_fit[0])
+        except:
+            left_curveR = right_curveR = 1000  # Default large radius
 
-        xl = np.dot(self.left_fit, [700**2, 700, 1])
-        xr = np.dot(self.right_fit, [700**2, 700, 1])
-        pos = (1280//2 - (xl+xr)//2)*xm
+        # Calculate vehicle position
+        try:
+            xl = np.dot(self.left_fit, [700**2, 700, 1])
+            xr = np.dot(self.right_fit, [700**2, 700, 1])
+            pos = (1280//2 - (xl+xr)//2)*xm
+        except:
+            pos = 0
+
         return left_curveR, right_curveR, pos 
     
     
